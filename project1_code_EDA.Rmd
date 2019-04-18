@@ -1,0 +1,275 @@
+---
+title: "BIOS 699 Project 5"
+author: "Mengbing Li"
+date: "April 18, 2019"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = 'C:/Users/mengbing/Box Sync/2019 Winter/BIOS699_BiostatisticsInvestigations/project5')
+
+library(dplyr)
+library(tidyr)
+library(data.table)
+library(reshape2)
+library(knitr)
+library(xlsx)
+library(ggplot2)
+```
+
+```{r}
+capacity <- fread("thedata.csv")
+colnames(capacity) <- tolower(colnames(capacity))
+colnames(capacity)[3] <- "age"
+
+# driver <- read.xlsx("ElderlyDriverData.xlsx", sheetName = "FeedbackReport_IE 1st Row 2014 ")
+# driver[,37:38] <- NULL
+# write.table(driver, file = "ElderlyDriverData.csv", quote = FALSE, sep = ",",
+#             row.names = FALSE, col.names = TRUE)
+driver <- fread("ElderlyDriverData.csv")
+colnames(driver) <- tolower(colnames(driver))
+colnames(driver)[33:34] <- c("ingresstime", "egresstime")
+colnames(driver)[which(colnames(driver)=="subjective.rating..scale.from.1.to.50.")] <- 
+  "subjectiveRating"
+```
+
+
+
+## Exploratory Data Analysis
+
+Things to explore:
+
+1. bar plot of gender distribution
+
+```{r}
+counts_gender <- table(capacity$gender)
+barplot(counts_gender, main="Gender Distribution", 
+   xlab="Gender")
+```
+
+2. histogram of age distribution
+```{r}
+hist(capacity$age, main = "Age distribution", xlab = "Age")
+
+ggplot(data = capacity, aes(x = age, fill = gender)) +
+  geom_histogram(bins = 8, alpha = 0.4) +
+  labs(title = "Age distribution by gender", x = "Age")
+
+summary(capacity$age)
+```
+
+
+3. gender distribution by group
+```{r}
+table(capacity$gender, capacity$group)
+```
+
+4. age distribution by group
+```{r}
+ggplot(data = capacity, aes(x = age, fill = group)) +
+  geom_histogram(bins = 5, alpha = 0.4) +
+  labs(title = "Age distribution by group", x = "Age")
+```
+
+
+5. scatter plot of ingress vs egress time
+```{r}
+ggplot(data = driver, aes(x = ingresstime, y = egresstime)) +
+  geom_point(aes(color = subjectiveRating)) +
+  scale_colour_gradient(low = "grey", high = "black") +
+  labs(title = "Overall ingress time vs egress time",
+       x = "Ingress time (s)", y = "Egress time (s)")
+```
+
+There is a positive correlation between ingress time and egress time.
+
+Enlarge the lower-left area to see overlapping points.
+```{r}
+ggplot(data = driver[driver$ingresstime<10 & driver$egresstime<10,], aes(x = ingresstime, y = egresstime)) +
+  geom_point(aes(color = subjectiveRating)) +
+  scale_colour_gradient(low = "grey", high = "black") +
+  labs(title = "Enlarged plot: Overall ingress time (<10s) vs egress time (<10s)",
+       x = "Ingress time (s)", y = "Egress time (s)")
+```
+People with longer ingress time and egress time seem to have higher subjective rating.
+
+
+
+6. ingress and egress time by test
+```{r}
+ggplot(data = driver, aes(x =vehicle.and.door.condition, y = ingresstime)) +
+  geom_boxplot(aes(fill = vehicle.and.door.condition)) +
+  geom_point(position = position_dodge(width=0.75), aes(group = vehicle.and.door.condition)) +
+  labs(title = "Box plots of ingress time by vehicle and door conditions",
+       x = "Vehicle and door conditions", y = "Ingress time")
+```
+
+```{r}
+driver$vehicle.and.door.condition <- factor(driver$vehicle.and.door.condition, levels = c(paste0("V", 1:7, "_Open"), paste0("V", 1:7, "_Pklt")))
+
+ggplot(data = driver, aes(x = vehicle.and.door.condition, y = egresstime)) +
+  geom_boxplot(aes(fill = doorCondition)) +
+  # geom_point(position = position_dodge(width=0.75), aes(group = vehicle.and.door.condition, color = factor(vehicle.order))) +
+  labs(title = "Box plots of egress time by vehicle and door conditions",
+       x = "Vehicle and door conditions", y = "Egress time") +
+  theme(legend.position="none",
+        plot.title = element_text(size = 18, face = "bold"),
+        axis.title = element_text(size = 15))
+ggsave("boxplot_egresstimeByVehicleDoor.png", height = 6, width = 10)
+```
+
+
+The pattern of ingress time by vehicle condition and egress time by vehicle condition are similar.
+
+
+
+
+Bivariate analyses of ingress time in each vehicle conditions by vehicle order
+```{r}
+vehicleConditions <- unique(driver$vehicle.and.door.condition)
+
+bivariateIngresstime <- c()
+for(name in vehicleConditions){
+  fit.byVehicleCondition <- lm(data = driver[vehicle.and.door.condition == name, ], ingresstime ~ vehicle.order)
+  fit.byVehicleCondition.summary <- summary(fit.byVehicleCondition)
+  bivariateIngresstime <- rbind(bivariateIngresstime, fit.byVehicleCondition.summary$coefficients[2, ])
+}
+
+rownames(bivariateIngresstime) <- vehicleConditions
+bivariateIngresstime
+```
+
+
+Bivariate analyses of egress time in each vehicle conditions by vehicle order
+```{r}
+vehicleConditions <- unique(driver$vehicle.and.door.condition)
+
+bivariateEgresstime <- c()
+for(name in vehicleConditions){
+  fit.byVehicleCondition <- lm(data = driver[vehicle.and.door.condition == name, ], egresstime ~ vehicle.order)
+  fit.byVehicleCondition.summary <- summary(fit.byVehicleCondition)
+  bivariateEgresstime <- rbind(bivariateEgresstime, fit.byVehicleCondition.summary$coefficients[2, ])
+}
+
+rownames(bivariateEgresstime) <- vehicleConditions
+bivariateEgresstime
+```
+
+From bivariate analysis above, we conclude that the order of testing vehicles does not significantly influence ingress or egress time.
+
+
+
+6. cross tabulation of ingress vs egress strageties
+```{r}
+table(driver$ingress.strategy, driver$egress.strategy)
+```
+
+The 317 people whose ingress stragety is normal and egress stragety is two feet are worth investigating.
+
+
+7. ingress time vs egress time by strageties
+```{r}
+ggplot(data = driver, aes(x = ingresstime, y = egresstime)) +
+  geom_point(aes(color = paste(ingress.strategy, egress.strategy))) +
+  # scale_colour_gradient(low = "grey", high = "black") +
+  labs(title = "Overall ingress time vs egress time by strategy",
+       x = "Ingress time (s)", y = "Egress time (s)")
+```
+
+```{r}
+ggplot(data = driver[!is.na(ingress.strategy), ], aes(x = ingresstime, fill = ingress.strategy)) +
+  geom_histogram(aes(x = ingresstime,y=..density..), alpha = 0.4) + 
+  geom_density(aes(x = ingresstime,y=..density..)) +
+  labs(title = "Distribution of ingress time by ingress strategy", x = "Ingress Time")
+```
+
+```{r}
+ggplot(data = driver[!is.na(egress.strategy), ], aes(x = egresstime, fill = egress.strategy)) +
+  geom_histogram(aes(x = egresstime,y=..density..), alpha = 0.6) + 
+  geom_density(aes(x = egresstime,y=..density..), alpha = 0.4) +
+  labs(title = "Distribution of egress time by Egress strategy", x = "Egress Time")
+```
+
+
+9. ingress time and egress time by order
+```{r}
+ggplot(data = driver[!is.na(egresstime), ], aes(x = egresstime, fill = vehicle.order)) +
+  geom_histogram(aes(x = egresstime,y=..density..), alpha = 0.6) + 
+  geom_density(aes(x = egresstime,y=..density..), alpha = 0.4) +
+  labs(title = "Distribution of egress time by vehicle order", x = "Egress Time")
+```
+
+
+
+
+8. spegatti plot of repeated measurements of mobility
+```{r}
+tugData <- melt(capacity[, c("subject", "tug1", "tug2")], #[, (diag.vars), with = FALSE]
+       id.vars = c("subject"),
+       measure.vars = c("tug1", "tug2"),
+       value.name = "tug",
+       variable.name = "measurement",
+       na.rm = TRUE)
+
+ggplot(data = tugData, aes(x = measurement, y = tug, group = subject)) +
+  geom_line() +
+  labs(title = "Two measurements of Timed Up and Go",
+       x = "Measurement", y = "Duration (s)")
+ggsave("lineplot_tug1Andtug2.png", width = 8, height = 6)
+```
+
+
+```{r}
+tugData <- melt(capacity[, c("subject", "tug1", "tug2")], #[, (diag.vars), with = FALSE]
+       id.vars = c("subject"),
+       measure.vars = c("tug1", "tug2"),
+       value.name = "tug",
+       variable.name = "measurement",
+       na.rm = TRUE)
+
+ggplot(data = tugData, aes(x = measurement, y = tug, group = subject)) +
+  geom_line() +
+  labs(title = "Two measurements of Timed Up and Go",
+       x = "Measurement", y = "Duration (s)")
+```
+
+
+```{r}
+summary(rowMeans(capacity[, c("tug1", "tug2")]))
+```
+
+
+```{r}
+hist(driver$egresstime)
+```
+
+
+9. scatter plot of one leg balance time vs egree and ingress time
+10. histogram of subjective rating
+11. scatter plot of ingress time vs egress time, gradient by subjective rating
+
+
+12. The amount of missingness
+```{r}
+missingProp <- function(x){
+  n <- length(x)
+  nmiss <- sum(is.na(x))
+  nmiss / n
+}
+
+driverMissProp <- apply(driver, 2, missingProp)
+driverMissProp[driverMissProp>0]
+
+capacityMissProp <- apply(capacity, 2, missingProp)
+capacityMissProp[capacityMissProp>0]
+```
+
+
+13. BMI
+```{r}
+driver$BMI <- with(driver, weight.kg./(stature..without.shoes.mm./1000)^2)
+summary(driver$BMI)
+```
+

@@ -1,0 +1,249 @@
+---
+title: "BIOS 699 Project 1 Analysis"
+author: "Mengbing Li"
+date: "January 15, 2019"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = 'C:/Users/mengbing/Box Sync/2019 Winter/BIOS699_BiostatisticsInvestigations/project1')
+
+library(dplyr)
+library(tidyr)
+library(data.table)
+library(readr)
+library(knitr)
+library(ggplot2)
+library(lme4)
+# library(lmerTest)
+```
+
+```{r}
+capacity <- fread("thedata.csv")
+colnames(capacity) <- tolower(colnames(capacity))
+colnames(capacity)[3] <- "age"
+
+driver <- fread("ElderlyDriverData.csv")
+colnames(driver) <- tolower(colnames(driver))
+colnames(driver)[33:34] <- c("ingresstime", "egresstime")
+colnames(driver)[which(colnames(driver)=="subjective.rating..scale.from.1.to.50.")] <- "subjectiveRating"
+colnames(driver)[which(colnames(driver)=="age..yrs.")] <- "age"
+```
+
+
+
+```{r}
+mergedData <- merge(x = driver, y = capacity,
+                    by = c("subject", "gender", "age"))
+colnames(mergedData) <- gsub("\\.", "", colnames(mergedData))
+
+# extract door condition
+mergedData$doorCondition <- with(mergedData, ifelse(grepl("Open", vehicleanddoorcondition), "open", "half-open"))
+# extract vehicle type
+mergedData$vehicle <- parse_number(mergedData$vehicleanddoorcondition)
+mergedData$vehicle <- as.factor(mergedData$vehicle)
+  
+# obtain averaged mobility measurements --------------------
+# time up and go
+mergedData$tug_mean <- apply(mergedData[, c("tug1", "tug2")], 1, function(x) mean(na.omit(x)))
+
+# one leg balance time
+olb_names <- grep("olb", colnames(mergedData), value = TRUE)
+mergedData$olb_mean <- apply(mergedData[, olb_names, with = FALSE], 1, function(x) mean(na.omit(x)))
+
+plot(mergedData$tug_mean, mergedData$olb_mean)
+cor(mergedData$tug_mean, mergedData$olb_mean, use="complete.obs")
+#-0.5512389. moderately strong correlation
+
+# Strength measurements ------------------------------------
+kneeext_names <- grep("kneeext", colnames(mergedData), value = TRUE)
+mergedData$kneeext_mean <- apply(mergedData[, kneeext_names, with = FALSE], 1, function(x) mean(na.omit(x)))
+
+hipabd_names <- grep("hipabd", colnames(mergedData), value = TRUE)
+mergedData$hipabd_mean <- apply(mergedData[, hipabd_names, with = FALSE], 1, function(x) mean(na.omit(x)))
+
+hiprtd_names <- grep("hiprtd", colnames(mergedData), value = TRUE)
+mergedData$hiprtd_mean <- apply(mergedData[, hiprtd_names, with = FALSE], 1, function(x) mean(na.omit(x)))
+
+grip_names <- grep("grip", colnames(mergedData), value = TRUE)
+mergedData$grip_mean <- apply(mergedData[, grip_names, with = FALSE], 1, function(x) mean(na.omit(x)))
+
+
+# Cognitive measurements -----------------------------------
+hiprtd_names <- grep("hiprtd", colnames(mergedData), value = TRUE)
+mergedData$hiprtd_mean <- apply(mergedData[, hiprtd_names, with = FALSE], 1, function(x) mean(na.omit(x)))
+
+# Scatterplot Matrices for reaction times
+my_cols <- c("#00AFBB", "#E7B800", "#FC4E07")  
+pairs(~ srt + rrt + accuracy + offaccuracy, 
+      data = mergedData, 
+      pch = 19,  cex = 0.5,
+      col = my_cols[as.numeric(factor(mergedData$group))],
+      main="Simple Scatterplot Matrix")
+## accuracy and offaccuracy are linearly associated
+cor(capacity$srt, capacity$rrt)
+
+# calculate BMI
+mergedData$BMI <- with(mergedData, weightkg/(staturewithoutshoesmm/1000)^2)
+```
+
+
+
+## 1. Does egress strategy and mobility impairments impact egress time?
+
+```{r}
+model0 <- lmer(data = mergedData, egresstime ~ egressstrategy + tug_mean + olb_mean + (1|subject))
+summary(model0)
+```
+
+```{r}
+anova(model0)
+```
+
+```{r}
+qqnorm(resid(model0))
+qqline(resid(model0))
+shapiro.test(resid(model0))
+```
+
+
+```{r}
+model0.2 <- lmer(data = mergedData, egresstime ~ egressstrategy + tug_mean + (1|subject))
+summary(model0.2)
+```
+
+Hence, egress stragety is not significantly associated with egress time. Tug mean is significant.
+
+
+
+## 2. Identify human capacities that affect egress time
+
+```{r}
+model1 <- lmer(data = mergedData, log(egresstime) ~ egressstrategy + tug_mean + olb_mean + age + gender + BMI + doorCondition + vehicle + group + kneeext_mean + hipabd_mean + hiprtd_mean + grip_mean + mmse + trailsb + srt + rrt + accuracy + (1|subject))
+summary(model1)
+```
+
+
+
+It turns out that egress stragety is strong affected by doorCondition. We will keep egress stragety for scientific interest.
+
+
+
+The largest p values come from trailsb, grip_mean, srt, hipabd_mean, hiprtd_mean, egressstrategy. We drop these variables and see whether the reduced model is sufficient.
+
+```{r}
+model2 <- lmer(data = mergedData, egresstime ~ egressstrategy + tug_mean + olb_mean + age + gender + BMI + doorCondition + vehicle + group + kneeext_mean + mmse + rrt + accuracy + (1|subject))
+(s2 <- summary(model2))
+(1-pt(abs(s2$coefficients[,3]), 624))*2
+```
+
+
+All coefficients except for egress stragety do not change much after dropping the variables. So we are fine with dropping the variables.
+
+
+```{r}
+model2.dataNomiss <- na.omit(mergedData[, c("subject", "egressstrategy", "egresstime", "tug_mean", "vehicle", "olb_mean", "age", "gender", "group", "mmse", "BMI", "kneeext_mean", "hipabd_mean", "hiprtd_mean", "grip_mean", "trailsb", "rrt", "srt", "accuracy", "doorCondition")])
+
+model1.nomiss <- lmer(data = model2.dataNomiss, egresstime ~ egressstrategy + tug_mean + olb_mean + age + gender + BMI + doorCondition + vehicle + group + kneeext_mean + hipabd_mean + hiprtd_mean + grip_mean + mmse + trailsb + srt + rrt + accuracy + (1|subject))
+
+model2.nomiss <- lmer(data = model2.dataNomiss, egresstime ~ egressstrategy + tug_mean + olb_mean + age + gender + BMI + doorCondition + group + kneeext_mean + mmse + rrt + accuracy + (1|subject))
+# summary(model2.nomiss)
+anova(model1.nomiss, model2.nomiss)
+```
+
+We do not consider model 1 and model 2 are different. The coefficients do not change much, except for accuracy. So we are fine with dropping the variables. 
+
+
+
+Now we continue dropping egress strategy, olb_mean (because of its strong correlation with tug_mean), and mmse.
+```{r}
+model3 <- lmer(data = mergedData, egresstime ~ tug_mean + age + gender + BMI + group + kneeext_mean + rrt + accuracy + vehicle + doorCondition + (1|subject))
+(s3 <- summary(model3))
+(1-pt(abs(s3$coefficients[,3]), 637))*2
+```
+
+
+Since some missing values in model 2 are excluded, we need to exclude the same observations in model 3 in order to to model comparison.
+
+```{r}
+mergedData.model3 <- na.omit(mergedData[, c("subject", "egressstrategy", "egresstime", "tug_mean", "olb_mean", "age", "gender", "BMI", "group", "kneeext_mean", "mmse", "rrt", "accuracy", "vehicle", "doorCondition")])
+model2.nomiss <- lmer(data = mergedData.model3, egresstime ~ egressstrategy + tug_mean + olb_mean + age + gender + BMI + doorCondition + vehicle + group + kneeext_mean + mmse + rrt + accuracy + (1|subject))
+model3.nomiss <- lmer(data = mergedData.model3, egresstime ~ tug_mean + age + gender + BMI + group + kneeext_mean + rrt + egressstrategy + vehicle + doorCondition + (1|subject))
+anova(model2.nomiss, model3.nomiss)
+```
+
+
+
+
+#### Model 4
+```{r}
+model4 <- lmer(data = mergedData, egresstime ~ tug_mean + gender + BMI + group + kneeext_mean + rrt + vehicle + doorCondition + (1|subject))
+(s4 <- summary(model4))
+(1-pt(abs(s4$coefficients[,3]), 637))*2
+```
+
+```{r}
+anova(model3, model4)
+```
+
+
+
+#### Model 5
+```{r}
+model5 <- lmer(data = mergedData, log(egresstime) ~ tug_mean + BMI + group + kneeext_mean + vehicle + doorCondition + (1|subject))
+(s5 <- summary(model5))
+(1-pt(abs(s5$coefficients[,3]), 637))*2
+```
+
+```{r}
+anova(model4, model5)
+```
+
+```{r}
+qqnorm(resid(model5))
+qqline(resid(model5))
+shapiro.test(resid(model5))
+```
+
+
+#### Model 6
+```{r}
+model6 <- lmer(data = mergedData, egresstime ~ tug_mean + BMI + vehicle + doorCondition + (1|subject))
+(s6 <- summary(model6))
+(1-pt(abs(s6$coefficients[,3]), 637))*2
+```
+
+```{r}
+anova(model5, model6)
+```
+
+
+```{r}
+qqnorm(resid(model6))
+qqline(resid(model6))
+shapiro.test(resid(model6))
+
+plot(model6, 
+     main = "")
+```
+
+Model 6 is the final model.
+Calculate model 6 coefficients.
+```{r}
+s6$coefficients[,1] + 1.96*s6$coefficients[,2]
+s6$coefficients[,1] - 1.96*s6$coefficients[,2]
+```
+
+```{r}
+confint(model6)
+```
+
+
+```{r}
+library(MuMIn)
+#Determine R2:
+r.squaredGLMM(model6) 
+```
+
