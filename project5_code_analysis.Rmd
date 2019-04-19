@@ -1,0 +1,179 @@
+---
+title: "BIOS 699 Project 1 Analysis"
+author: "Mengbing Li"
+date: "January 15, 2019"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = 'C:/Users/mengbing/Box Sync/2019 Winter/BIOS699_BiostatisticsInvestigations/project1')
+
+library(dplyr)
+library(tidyr)
+library(data.table)
+library(readr)
+library(knitr)
+library(ggplot2)
+library(lme4)
+# library(lmerTest)
+```
+
+```{r}
+capacity <- fread("thedata.csv")
+colnames(capacity) <- tolower(colnames(capacity))
+colnames(capacity)[3] <- "age"
+
+driver <- fread("ElderlyDriverData.csv")
+colnames(driver) <- tolower(colnames(driver))
+colnames(driver)[33:34] <- c("ingresstime", "egresstime")
+colnames(driver)[which(colnames(driver)=="subjective.rating..scale.from.1.to.50.")] <- "subjectiveRating"
+colnames(driver)[which(colnames(driver)=="age..yrs.")] <- "age"
+```
+
+
+
+```{r}
+mergedData <- merge(x = driver, y = capacity,
+                    by = c("subject", "gender", "age"))
+colnames(mergedData) <- gsub("\\.", "", colnames(mergedData))
+
+# extract door condition
+mergedData$doorCondition <- with(mergedData, ifelse(grepl("Open", vehicleanddoorcondition), "open", "half-open"))
+# extract vehicle type
+mergedData$vehicle <- parse_number(mergedData$vehicleanddoorcondition)
+mergedData$vehicle <- as.factor(mergedData$vehicle)
+  
+# obtain averaged mobility measurements --------------------
+# time up and go
+mergedData$tug_mean <- apply(mergedData[, c("tug1", "tug2")], 1, function(x) mean(na.omit(x)))
+
+# one leg balance time
+olb_names <- grep("olb", colnames(mergedData), value = TRUE)
+mergedData$olb_mean <- apply(mergedData[, olb_names, with = FALSE], 1, function(x) mean(na.omit(x)))
+
+plot(mergedData$tug_mean, mergedData$olb_mean)
+cor(mergedData$tug_mean, mergedData$olb_mean, use="complete.obs")
+#-0.5512389. moderately strong correlation
+
+# Strength measurements ------------------------------------
+kneeext_names <- grep("kneeext", colnames(mergedData), value = TRUE)
+mergedData$kneeext_mean <- apply(mergedData[, kneeext_names, with = FALSE], 1, function(x) mean(na.omit(x)))
+
+hipabd_names <- grep("hipabd", colnames(mergedData), value = TRUE)
+mergedData$hipabd_mean <- apply(mergedData[, hipabd_names, with = FALSE], 1, function(x) mean(na.omit(x)))
+
+hiprtd_names <- grep("hiprtd", colnames(mergedData), value = TRUE)
+mergedData$hiprtd_mean <- apply(mergedData[, hiprtd_names, with = FALSE], 1, function(x) mean(na.omit(x)))
+
+grip_names <- grep("grip", colnames(mergedData), value = TRUE)
+mergedData$grip_mean <- apply(mergedData[, grip_names, with = FALSE], 1, function(x) mean(na.omit(x)))
+
+
+# Cognitive measurements -----------------------------------
+hiprtd_names <- grep("hiprtd", colnames(mergedData), value = TRUE)
+mergedData$hiprtd_mean <- apply(mergedData[, hiprtd_names, with = FALSE], 1, function(x) mean(na.omit(x)))
+
+# Scatterplot Matrices for reaction times
+my_cols <- c("#00AFBB", "#E7B800", "#FC4E07")  
+pairs(~ srt + rrt + accuracy + offaccuracy, 
+      data = mergedData, 
+      pch = 19,  cex = 0.5,
+      col = my_cols[as.numeric(factor(mergedData$group))],
+      main="Simple Scatterplot Matrix")
+## accuracy and offaccuracy are linearly associated
+cor(capacity$srt, capacity$rrt)
+
+# calculate BMI
+mergedData$BMI <- with(mergedData, weightkg/(staturewithoutshoesmm/1000)^2)
+```
+
+
+
+
+
+
+
+Boxplot of ingress time
+
+```{r}
+mergedData$vehicleanddoorcondition <- factor(mergedData$vehicleanddoorcondition, levels = c(paste0("V", 1:7, "_Open"), paste0("V", 1:7, "_Pklt")))
+
+ggplot(data = mergedData, aes(x = vehicle, y = ingresstime)) +
+  geom_boxplot(aes(fill = vehicle)) +#aes(fill = doorCondition)
+  labs(title = "Box plots of ingress time by vehicle and door conditions",
+       x = "Vehicle number", y = "Ingress time (seconds)") +
+  theme(legend.position="none",
+        plot.title = element_text(size = 18, face = "bold"),
+        axis.title = element_text(size = 15),
+        axis.text.x = element_text(angle = -90, hjust = 0)) +
+  theme_bw() +
+  facet_grid(.~doorCondition, labeller = as_labeller(c("half-open"="Half-open", "open"="Open"))) +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank()) +
+  scale_fill_discrete(labels = paste("Vehicle", 1:7), name = "Vehicle Number")
+ggsave("boxplot_ingresstimeByVehicleDoor.png", height = 6, width = 10)
+```
+
+
+
+
+
+
+
+## 1. Does egress strategy and mobility impairments impact egress time?
+
+OLB_L: maximum of OLB time
+
+```{r}
+mergedData$age_c <- mergedData$age - mean(mergedData$age)
+mergedData$weight_c <- mergedData$weightkg - mean(mergedData$weightkg)
+mergedData[, hipabd_max := max(hipabd1, hipabd2, hipabd3, na.rm = TRUE), by = subject]
+mergedData$hipabd_max_c <- mergedData$hipabd_max - mean(mergedData$hipabd_max) 
+# mergedData[1:20, .(subject, hipabd1, hipabd2, hipabd3, hipabd_max)]
+
+
+mergedData[, olb_missing := all(is.na(olb_l1), is.na(olb_l2), is.na(olb_l3)), by = subject]
+mergedData <- mergedData[olb_missing == FALSE,]
+mergedData[, c("olb_l1", "olb_l2", "olb_l3")] <- lapply(mergedData[, c("olb_l1", "olb_l2", "olb_l3")], as.numeric)
+mergedData[, olb_max := max(olb_l1, olb_l2, olb_l3), by = subject]
+# mergedData[1:20, .(subject, olb_l1, olb_l2, olb_l3), olb_max]
+
+mergedData[, dim8c := vehicledimension8 - mean(vehicledimension8)]
+mergedData[, dim9c := vehicledimension9 - mean(vehicledimension9)]
+
+```
+
+
+
+```{r}
+model <- lmer(data = mergedData,
+                ingresstime ~ age_c + gender + doorCondition + (1|subject) + weight_c + 
+                  hipabd_max_c + olb_max + group + ingressstrategy +
+                  dim8c + dim9c)
+(s <- summary(model))
+```
+
+
+
+```{r}
+qqnorm(resid(model))
+qqline(resid(model))
+shapiro.test(resid(model))
+
+plot(model, 
+     main = "")
+```
+
+Model is the final model.
+Calculate model coefficients.
+```{r}
+s$coefficients[,1] + 1.96*s$coefficients[,2]
+s$coefficients[,1] - 1.96*s$coefficients[,2]
+```
+
+```{r}
+confint(model)
+```
+
